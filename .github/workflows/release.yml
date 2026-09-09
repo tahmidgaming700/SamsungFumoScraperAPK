@@ -2,6 +2,7 @@ name: Build and Release APK
 
 on:
   push:
+    branches: [main]
     tags: ['v*']
   workflow_dispatch:
 
@@ -27,7 +28,15 @@ jobs:
         run: gradle :app:assembleRelease --stacktrace
       - name: Rename APK
         run: cp app/build/outputs/apk/release/app-release.apk SamsungFumoScraper-${GITHUB_REF_NAME}.apk
-      - name: Publish GitHub Release
+      - name: Publish v1.0.0 GitHub Release
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.0
+          name: Samsung FUMO Scraper v1.0.0
+          generate_release_notes: true
+          files: SamsungFumoScraper-${GITHUB_REF_NAME}.apk
+      - name: Publish tagged GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
