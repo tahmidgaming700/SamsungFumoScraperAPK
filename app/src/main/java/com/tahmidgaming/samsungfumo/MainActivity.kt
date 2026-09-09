@@ -6,6 +6,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -91,9 +92,24 @@ fun FumoApp() {
             },
             bottomBar = {
                 NavigationBar(containerColor = Color.Transparent) {
-                    NavigationBarItem(screen == Screen.HOME, { screen = Screen.HOME }, { Icon(Icons.Default.Search, null) }, { Text("Discover") })
-                    NavigationBarItem(screen == Screen.DOWNLOADS, { screen = Screen.DOWNLOADS }, { Icon(Icons.Default.Download, null) }, { Text("Downloads") })
-                    NavigationBarItem(screen == Screen.SETTINGS, { screen = Screen.SETTINGS }, { Icon(Icons.Default.Settings, null) }, { Text("Settings") })
+                    NavigationBarItem(
+                        selected = screen == Screen.HOME,
+                        onClick = { screen = Screen.HOME },
+                        icon = { Icon(Icons.Default.Search, contentDescription = null) },
+                        label = { Text("Discover") }
+                    )
+                    NavigationBarItem(
+                        selected = screen == Screen.DOWNLOADS,
+                        onClick = { screen = Screen.DOWNLOADS },
+                        icon = { Icon(Icons.Default.Download, contentDescription = null) },
+                        label = { Text("Downloads") }
+                    )
+                    NavigationBarItem(
+                        selected = screen == Screen.SETTINGS,
+                        onClick = { screen = Screen.SETTINGS },
+                        icon = { Icon(Icons.Default.Settings, contentDescription = null) },
+                        label = { Text("Settings") }
+                    )
                 }
             }
         ) { pad ->
@@ -140,12 +156,12 @@ private fun Home(
             Card(shape = RoundedCornerShape(28.dp)) {
                 Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text("Device", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-                    OutlinedTextField(model, setM, label = { Text("Model (e.g. SM-T805)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                    OutlinedTextField(csc, setC, label = { Text("CSC (e.g. INU)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                    OutlinedTextField(firmware, setF, label = { Text("Current build (optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                    OutlinedTextField(imei, setI, label = { Text("IMEI (only if required by OSP)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = model, onValueChange = setM, label = { Text("Model (e.g. SM-T805)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = csc, onValueChange = setC, label = { Text("CSC (e.g. INU)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = firmware, onValueChange = setF, label = { Text("Current build (optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = imei, onValueChange = setI, label = { Text("IMEI (only if required by OSP)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     Button(onClick = check, enabled = !busy, modifier = Modifier.fillMaxWidth().height(52.dp)) {
-                        Icon(Icons.Default.Refresh, null); Spacer(Modifier.width(8.dp)); Text(if (busy) "Checking…" else "Check Samsung")
+                        Icon(Icons.Default.Refresh, contentDescription = null); Spacer(Modifier.width(8.dp)); Text(if (busy) "Checking…" else "Check Samsung")
                     }
                 }
             }
@@ -165,7 +181,7 @@ private fun Home(
         item {
             Card(shape = RoundedCornerShape(22.dp)) {
                 Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Info, null); Spacer(Modifier.width(12.dp))
+                    Icon(Icons.Default.Info, contentDescription = null); Spacer(Modifier.width(12.dp))
                     Text("FUMO registration is authenticated by Samsung. The app never fabricates signatures or firmware URLs.")
                 }
             }
