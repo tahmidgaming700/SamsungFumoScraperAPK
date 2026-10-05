@@ -5,24 +5,26 @@ plugins {
 }
 
 android {
-    namespace = "com.tahmidgaming.samsungfumo"
+    namespace = "com.tahmidgaming.osupdater"
     compileSdk = 35
     defaultConfig {
-        applicationId = "com.tahmidgaming.samsungfumo"
-        minSdk = 26
+        applicationId = "com.tahmidgaming.osupdater"
+        minSdk = 23
         targetSdk = 35
-        versionCode = 1
+        versionCode = 100
         versionName = "1.0.0"
     }
-
+    buildTypes {
+        release {
+            signingConfig = signingConfigs.getByName("debug")
+            isMinifyEnabled = false
+        }
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-
-    kotlinOptions {
-        jvmTarget = "17"
-    }
+    kotlinOptions { jvmTarget = "17" }
 }
 
 dependencies {
@@ -34,9 +36,6 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
-    implementation("androidx.work:work-runtime-ktx:2.10.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation("com.squareup.okhttp3:okhttp-urlconnection:4.12.0")
-    implementation("com.google.code.gson:gson:2.11.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
