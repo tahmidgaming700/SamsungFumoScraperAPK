@@ -1,30 +1,35 @@
-# Samsung FUMO Scraper APK
+# OS Updater for Galaxy Tab S
 
-Native Android port/reimplementation of the workflow and UI concepts from the public GPLv3 SamsungFumoScraper and SamsungFumoClient projects by timschneeb.
+Native Android firmware/update utility focused on Samsung Galaxy Tab S variants.
 
-## v1.0.0
-- SamsungFumoScraper-style **Android / Galaxy Buds / Advanced** modes
-- Samsung model and CSC input
-- Automatic Android model/build detection
-- Samsung `version.xml` discovery
-- Dedicated **Download** action
-- Dedicated **Changelog** action
-- Downloads screen with Android DownloadManager integration
-- FUMO/OMA-DM architecture and authentication diagnostics
-- Rounded Material 3 interface with light/dark themes
-- No flashing, unlocking, recovery or partition operations
+## Supported models
+- SM-T805
+- SM-T805K
+- SM-T807
+- SM-T800
+- SM-T705
 
-### Important
-Samsung OSP/FUMO registration is authenticated. This application does not forge signatures, bypass authentication, or embed private Samsung credentials. Samsung may require a real registered device identity. A protected firmware download URL is only used when Samsung's authenticated FUMO/OMA-DM session returns an objectURI.
+## Features
+- Modern updater UI, separate from the LineageOS Archive Downloader layout
+- TimSchumi LineageOS archive discovery and download
+- LineageOS OTA-ready package download for TWRP/OrangeFox OpenRecoveryScript
+- SamFW firmware pages and SamFW-server download workflow through Android WebView/DownloadManager
+- Samsung FUMO/OMA-DM stock OTA workflow based on the public SamsungFumoScraper concept
+- ZIP and TAR.MD5 extraction procedure
+- Root detection and /dev/block/by-name partition discovery
+- dd image flashing for explicitly selected stock images
+- TWRP and OrangeFox OpenRecoveryScript preparation
 
-## Upstream
-See `UPSTREAM_FUMO.md` for the source repositories and port scope.
+## Safety
+This is an unofficial community utility. Samsung firmware pages and FUMO services may require authentication or device registration. Old firmware can be unavailable. The LineageOS archive is unofficial and warns that archived builds may be obsolete. Flashing the wrong partition can permanently brick a device.
 
-## Build
-GitHub Actions builds a debug APK first and then a release APK on pushes to `main`. The workflow publishes `v1.0.0` from `main`.
+The app does not bypass Samsung authentication or bootloader security.
 
-## Credits
-Protocol concepts and the downloader workflow are based on the public GPLv3 SamsungFumoClient and SamsungFumoScraper projects by timschneeb.
+## Sources
+- LineageOS archive: https://lineage-archive.timschumi.net/
+- SamsungFumoScraper: https://github.com/timschneeb/SamsungFumoScraper
+- SamsungFumoClient: https://github.com/timschneeb/SamsungFumoClient
+- SamFW: https://samfw.com/
 
 ## License
 GPL-3.0-or-later.
