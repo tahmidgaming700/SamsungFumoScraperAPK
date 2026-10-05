@@ -28,6 +28,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -181,6 +182,7 @@ class MainActivity : ComponentActivity() {
         return output.walkTopDown().count { it.isFile }
     }
 
+    @OptIn(ExperimentalMaterial3Api::class)
     @Composable
     private fun App() {
         var page by remember { mutableStateOf("home") }
@@ -242,7 +244,7 @@ class MainActivity : ComponentActivity() {
             item { Action("LineageOS", "TimSchumi archive • OTA-ready package", Icons.Default.SystemUpdate) { go("lineage") } }
             item { Action("Stock firmware", "SamFW server workflow", Icons.Default.Download) { go("stock") } }
             item { Action("Stock OTA", "Samsung FUMO / OMA-DM workflow", Icons.Default.Refresh) { go("ota") } }
-            item { Action("Extract firmware", "ZIP → TAR.MD5 → images", Icons.Default.FolderZip) { go("extract") } }
+            item { Action("Extract firmware", "ZIP → TAR.MD5 → images", Icons.Default.Folder) { go("extract") } }
             item { Action("Flashing tools", "TWRP / OrangeFox OpenRecoveryScript • dd", Icons.Default.FlashOn) { go("flash") } }
             item {
                 Card(Modifier.fillMaxWidth()) {
