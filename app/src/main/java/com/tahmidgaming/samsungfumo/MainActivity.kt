@@ -40,7 +40,9 @@ data class Csc(val code:String,val country:String)
 data class GalaxyModel(val model:String,val name:String,val codename:String,val cscs:List<Csc>)
 data class Firmware(val version:String,val csc:String,val sourceUrl:String)
 data class LBuild(val filename:String,val url:String,val sha256:String?,val size:Long?)
-data class Ota(val version:String,val csc:String)
+data class Ota(val version:String,val csc:String,val pda:String="",val cscVersion:String="",val modem:String="")
+data class AppRelease(val tag:String,val name:String,val apkUrl:String?,val notes:String)
+data class RootRelease(val version:String,val apkUrl:String?)
 
 private val MODELS=listOf(
  GalaxyModel("SM-T805","Galaxy Tab S 10.5 LTE","chagalllte",listOf(Csc("BNG","Bangladesh"),Csc("INU","India"),Csc("INS","India"),Csc("NPL","Nepal"),Csc("XSG","UAE"),Csc("XME","Malaysia"),Csc("XSE","Indonesia"),Csc("TUR","Turkey"))),
@@ -61,7 +63,28 @@ class MainActivity:ComponentActivity(){
  private suspend fun lineage(code:String):List<LBuild>{val a=JSONArray(get("https://lineage-archive.timschumi.net/api/builds"));val ids=(0 until a.length()).map{a.getJSONObject(it)}.filter{it.optString("device")==code}.sortedByDescending{it.optString("filename")}.take(25);val out=mutableListOf<LBuild>();for(r in ids){try{val o=JSONObject(get("https://lineage-archive.timschumi.net/api/builds/"+r.optLong("id")));out+=LBuild(o.optString("filename"),o.optString("url"),o.optString("sha256").takeIf{it.isNotBlank()},o.optLong("filesize").takeIf{it>0})}catch(_:Exception){}};return out}
   private fun extractSamFwServerLink(html:String):String?{val marker="SamFw server";val p=html.indexOf(marker,ignoreCase=true);if(p<0)return null;val left=html.lastIndexOf("href=",p,ignoreCase=true);if(left<0)return null;var q=html.indexOf('"',left+5);if(q<0)q=html.indexOf('\'',left+5);if(q<0)return null;val e=html.indexOf(html[q],q+1);if(e<0)return null;val link=html.substring(q+1,e);return if(link.startsWith("/"))"https://samfw.com"+link else link}
  private suspend fun stock(model:String,csc:String):List<Firmware>{val index=get("https://samfw.com/firmware/"+model+"/"+csc);val rx=Regex("/firmware/"+Regex.escape(model)+"/"+Regex.escape(csc)+"/([A-Za-z0-9]+)");val versions=rx.findAll(index).map{it.groupValues[1]}.distinct().take(12).toList();val out=mutableListOf<Firmware>();for(v in versions){try{val page="https://samfw.com/firmware/"+model+"/"+csc+"/"+v;val link=extractSamFwServerLink(get(page));out+=Firmware(v,csc,link?:"")}catch(_:Exception){}};return out}
- private suspend fun ota(model:String,csc:String):Ota{val xml=get("https://fota-cloud-dn.ospserver.net/firmware/"+csc+"/"+model+"/version.xml");val v=Regex("<latest>(.*?)</latest>").find(xml)?.groupValues?.get(1)?.trim();return Ota(v?:"No update",csc)}
+ private suspend fun ota(model:String,csc:String):Ota{
+     val urls=listOf("https://fota-cloud-dn.ospserver.net/firmware/$csc/$model/version.xml","https://fota-secure-dn.ospserver.net/firmware/$csc/$model/version.xml")
+     var last:Throwable?=null
+     for(url in urls){
+         try{
+             val xml=http.newCall(Request.Builder().url(url).header("User-Agent","Kies2.0_FUS").header("Accept","*/*").header("Connection","close").build()).execute().use{if(!it.isSuccessful)throw IllegalStateException("FUMO HTTP "+it.code);it.body?.string()?:""}
+             val latest=Regex("<latest(?:\\s+[^>]*)?>(.*?)</latest>",RegexOption.IGNORE_CASE).find(xml)?.groupValues?.get(1)?.trim()
+             if(!latest.isNullOrBlank()){val p=latest.split("/");return Ota(latest,csc,p.getOrElse(0){""},p.getOrElse(1){""},p.getOrElse(2){""})}
+         }catch(t:Throwable){last=t}
+     }
+     throw IllegalStateException("Samsung FUMO rejected $model/$csc (403 or legacy service). Try another CSC.",last)
+ }
+ private suspend fun appRelease():AppRelease{
+     val j=JSONObject(get("https://api.github.com/repos/tahmidgaming700/SamsungFumoScraperAPK/releases/latest"));val a=j.optJSONArray("assets");var apk:String?=null
+     if(a!=null)for(i in 0 until a.length()){val x=a.getJSONObject(i);if(x.optString("name").endsWith(".apk",true)){apk=x.optString("browser_download_url");break}}
+     return AppRelease(j.optString("tag_name"),j.optString("name"),apk,j.optString("body"))
+ }
+ private suspend fun rootRelease():RootRelease{
+     val j=JSONObject(get("https://api.github.com/repos/topjohnwu/Magisk/releases/latest"));val a=j.optJSONArray("assets");var apk:String?=null
+     if(a!=null)for(i in 0 until a.length()){val x=a.getJSONObject(i);if(x.optString("name").endsWith(".apk",true)){apk=x.optString("browser_download_url");break}}
+     return RootRelease(j.optString("tag_name"),apk)
+ }
  private fun recovery(file:String):Boolean{val safe=file.substringAfterLast('/').takeIf{it.matches(Regex("[A-Za-z0-9._+()\\- ]+"))}?:return false;val script="install /sdcard/Download/"+safe+"\n";val cmd="mkdir -p /cache/recovery /data/cache/recovery /persist/cache/recovery 2>/dev/null; for f in /cache/recovery/openrecoveryscript /data/cache/recovery/openrecoveryscript /persist/cache/recovery/openrecoveryscript; do d=\$(dirname \"\$f\"); if [ -d \"\$d\" ]; then printf '%s' "+quote(script)+" > \"\$f\"; chmod 0644 \"\$f\"; echo OK; break; fi; done";return root(cmd).contains("OK")}
  private fun dd(path:String,part:String):String{val f=File(path);if(!f.exists())return "Image not found";if(!part.matches(Regex("[A-Za-z0-9_+.-]+")))return "Invalid partition";val dst="/dev/block/by-name/"+part;val o=root("[ -b '"+dst+"' ] || exit 3; dd if="+quote(f.absolutePath)+" of='"+dst+"' bs=4M conv=fsync; sync; echo DD_OK");return if(o.contains("DD_OK"))"Flashed "+part+" successfully" else "dd failed"}
  @OptIn(ExperimentalMaterial3Api::class)
@@ -83,7 +106,7 @@ class MainActivity:ComponentActivity(){
              )
          },
          bottomBar = {
-             if(screen in setOf("home","firmware","lineage","downloads","tools","settings")) Bottom(screen) { screen = it }
+             if(screen in setOf("home","firmware","lineage","downloads","tools","updates","settings")) Bottom(screen) { screen = it }
          }
      ){ padding ->
          Surface(Modifier.fillMaxSize().padding(padding)){
@@ -96,14 +119,15 @@ class MainActivity:ComponentActivity(){
                  "ota" -> OtaScreen(model,csc)
                  "downloads" -> Downloads()
                  "tools" -> Tools()
+                 "updates" -> Updates(model,csc)
                  "settings" -> Settings()
              }
          }
      }
  }
  @Composable private fun Checking(){Column(Modifier.fillMaxSize(),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center){CircularProgressIndicator();Spacer(Modifier.height(16.dp));Text("Checking device…",fontWeight=FontWeight.SemiBold);Text("OS Updater for Galaxy Tab S")}}
- private fun title(s:String)=when(s){"firmware"->"Stock firmware";"lineage"->"LineageOS";"ota"->"Stock OTA";"downloads"->"Downloads";"tools"->"Flashing tools";"settings"->"Settings";"models"->"Galaxy Tab S models";"csc"->"CSC selection";else->"OS Updater for Galaxy Tab S"}
- @Composable private fun Bottom(s:String,go:(String)->Unit){NavigationBar{listOf("home" to Icons.Default.Home,"firmware" to Icons.Default.SystemUpdate,"lineage" to Icons.Default.Android,"downloads" to Icons.Default.Download,"tools" to Icons.Default.Build,"settings" to Icons.Default.Settings).forEach{(id,icon)->NavigationBarItem(selected=s==id,onClick={go(id)},icon={Icon(icon,null)},label={Text(id.replaceFirstChar{it.uppercase()})})}}}
+ private fun title(s:String)=when(s){"firmware"->"Stock firmware";"lineage"->"LineageOS";"ota"->"Stock OTA";"downloads"->"Downloads";"tools"->"Flashing tools";"settings"->"Settings";"updates"->"Updates";"models"->"Galaxy Tab S models";"csc"->"CSC selection";else->"OS Updater for Galaxy Tab S"}
+ @Composable private fun Bottom(s:String,go:(String)->Unit){NavigationBar{listOf("home" to Icons.Default.Home,"firmware" to Icons.Default.SystemUpdate,"lineage" to Icons.Default.Android,"downloads" to Icons.Default.Download,"tools" to Icons.Default.Build,"updates" to Icons.Default.SystemUpdate,"settings" to Icons.Default.Settings).forEach{(id,icon)->NavigationBarItem(selected=s==id,onClick={go(id)},icon={Icon(icon,null)},label={Text(id.replaceFirstChar{it.uppercase()})})}}}
  @Composable private fun Home(m:GalaxyModel,c:Csc,go:(String)->Unit)=LazyColumn(Modifier.padding(20.dp),verticalArrangement=Arrangement.spacedBy(14.dp)){item{Card(Modifier.fillMaxWidth()){Column(Modifier.padding(20.dp)){Text("Software Update",style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold);Text("Galaxy Tab S firmware center");Spacer(Modifier.height(12.dp));Text(m.model,fontWeight=FontWeight.Bold);Text(m.name);Text("CSC "+c.code+" • "+c.country);Spacer(Modifier.height(10.dp));Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){Button({go("models")}){Text("Device")};OutlinedButton({go("csc")}){Text("CSC")}}}}};item{CardNav("Stock firmware","Native firmware search • SamFW Server",Icons.Default.SystemUpdate){go("firmware")}};item{CardNav("LineageOS","TimSchumi archive • SHA-256 • OTA package",Icons.Default.Android){go("lineage")}};item{CardNav("Stock OTA","Samsung FOTA metadata • no website UI",Icons.Default.Refresh){go("ota")}};item{CardNav("Downloads","Firmware and package downloads",Icons.Default.Download){go("downloads")}};item{CardNav("Flashing tools","TWRP • OrangeFox • dd",Icons.Default.Build){go("tools")}};item{Card(Modifier.fillMaxWidth()){Column(Modifier.padding(16.dp)){Text("Native interface",fontWeight=FontWeight.Bold);Text("No SamFW, Samsung FUMO, or archive websites are embedded in the app UI. Network services are consumed by the app and rendered as native screens.")}}}}
  @Composable
  private fun CardNav(t:String,s:String,i:ImageVector,go:()->Unit){
@@ -124,6 +148,26 @@ class MainActivity:ComponentActivity(){
  @Composable private fun Firmware(m:GalaxyModel,c:Csc){val ctx=LocalContext.current;var rows by remember{mutableStateOf<List<Firmware>>(emptyList())};var status by remember{mutableStateOf("Ready")};Column(Modifier.padding(20.dp)){Text("SamFW Server",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold);Text(m.model+" • "+c.code+" • "+c.country);Button({lifecycleScope.launch{status="Checking…";runCatching{stock(m.model,c.code)}.onSuccess{rows=it;status=it.size.toString()+" firmware entries"}.onFailure{status=it.message?:"Failed"}}},Modifier.fillMaxWidth()){Text("Check firmware")};Text(status);LazyColumn(verticalArrangement=Arrangement.spacedBy(8.dp)){items(rows){f->Card(Modifier.fillMaxWidth()){Column(Modifier.padding(14.dp)){Text(f.version,fontWeight=FontWeight.Bold);Text("CSC "+f.csc);Button({enqueue(ctx,f.sourceUrl,m.model+"_"+c.code+"_"+f.version+".firmware")},Modifier.fillMaxWidth()){Text("Download from SamFW Server")}}}}}}}
  @Composable private fun Lineage(m:GalaxyModel){val ctx=LocalContext.current;var rows by remember{mutableStateOf<List<LBuild>>(emptyList())};var status by remember{mutableStateOf("Ready")};Column(Modifier.padding(20.dp)){Text("TimSchumi Archive",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold);Text(m.model+" • "+m.codename+" • unofficial archive");Button({lifecycleScope.launch{status="Checking…";runCatching{lineage(m.codename)}.onSuccess{rows=it;status=it.size.toString()+" builds found"}.onFailure{status=it.message?:"Failed"}}},Modifier.fillMaxWidth()){Text("Check archive")};Text(status);LazyColumn(verticalArrangement=Arrangement.spacedBy(8.dp)){items(rows){b->Card(Modifier.fillMaxWidth()){Column(Modifier.padding(14.dp)){Text(b.filename,fontWeight=FontWeight.Bold);b.size?.let{Text((it/1024/1024).toString()+" MB")};b.sha256?.let{Text("SHA-256 "+it,style=MaterialTheme.typography.bodySmall)};Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){Button({enqueue(ctx,b.url,b.filename)}){Text("Download")};OutlinedButton({enqueue(ctx,b.url,b.filename)}){Text("OTA")}}}}}}}}
  @Composable private fun OtaScreen(m:GalaxyModel,c:Csc){var state by remember{mutableStateOf("Ready")};var result by remember{mutableStateOf<Ota?>(null)};Column(Modifier.padding(20.dp)){Text("Samsung Stock OTA",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold);Text("Native FOTA check • "+m.model+" / "+c.code);Button({lifecycleScope.launch{state="Checking…";runCatching{ota(m.model,c.code)}.onSuccess{result=it;state="Complete"}.onFailure{state=it.message?:"Samsung rejected the request"}}},Modifier.fillMaxWidth()){Text("Check for OTA")};Text(state);result?.let{Card(Modifier.fillMaxWidth().padding(top=12.dp)){Column(Modifier.padding(16.dp)){Text(it.version,fontWeight=FontWeight.Bold);Text("CSC "+it.csc);Text("Samsung FOTA metadata received. A legacy device can be rejected by Samsung if registration requirements are not met.")}}}}}
+ @Composable private fun Updates(m:GalaxyModel,c:Csc){
+     val ctx=LocalContext.current
+     var busy by remember{mutableStateOf(false)}
+     var app by remember{mutableStateOf<AppRelease?>(null)}
+     var root by remember{mutableStateOf<RootRelease?>(null)}
+     var os by remember{mutableStateOf<Ota?>(null)}
+     var message by remember{mutableStateOf("Ready")}
+     fun refresh(){lifecycleScope.launch{busy=true;message="Checking updates…";runCatching{app=appRelease()};runCatching{root=rootRelease()};runCatching{os=ota(m.model,c.code)}.onFailure{message=it.message?:"FUMO check failed"};busy=false}}
+     LaunchedEffect(Unit){refresh()}
+     LazyColumn(Modifier.padding(18.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
+         item{Text("Software Update",style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold);Text("App • OS • Root update centre",color=MaterialTheme.colorScheme.onSurfaceVariant)}
+         item{UpdateCard("App updater","OS Updater for Galaxy Tab S","Latest: "+(app?.tag?:"Checking…"),app?.apkUrl,ctx)}
+         item{UpdateCard("OS updater","Samsung FUMO • "+m.model+" • "+c.code,"Latest: "+(os?.version?:"Checking…"),null,ctx)}
+         item{UpdateCard("Root updater","Magisk","Latest: "+(root?.version?:"Checking…"),root?.apkUrl,ctx)}
+         item{Card(Modifier.fillMaxWidth(),shape=RoundedCornerShape(24.dp)){Column(Modifier.padding(18.dp)){Text("FUMO / 403 handling",fontWeight=FontWeight.Bold);Spacer(Modifier.height(6.dp));Text("Update checks no longer depend on SamFW web pages. Samsung FUMO is queried with the Kies2.0_FUS client header and a secure-host fallback. A Samsung-side 403 is reported clearly instead of being treated as a firmware-list error.")}}
+         item{Button(onClick={refresh()},modifier=Modifier.fillMaxWidth(),enabled=!busy){Icon(Icons.Default.Refresh,null);Spacer(Modifier.width(8.dp));Text("Check again")}}
+         item{Text(message,color=MaterialTheme.colorScheme.onSurfaceVariant)}
+     }
+ }
+ @Composable private fun UpdateCard(title:String,subtitle:String,status:String,url:String?,ctx:Context){Card(Modifier.fillMaxWidth(),shape=RoundedCornerShape(24.dp)){Column(Modifier.padding(18.dp)){Text(title,style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold);Text(subtitle,color=MaterialTheme.colorScheme.onSurfaceVariant);Spacer(Modifier.height(10.dp));Text(status,fontWeight=FontWeight.SemiBold);if(url!=null){Spacer(Modifier.height(10.dp));Button(onClick={enqueue(ctx,url,title.replace(" ","_")+".apk")},modifier=Modifier.fillMaxWidth()){Icon(Icons.Default.Download,null);Spacer(Modifier.width(7.dp));Text("Download update")}}}}}
  @Composable private fun Downloads()=Column(Modifier.padding(20.dp)){Text("Downloads",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold);Spacer(Modifier.height(10.dp));Card(Modifier.fillMaxWidth()){Text("Android Download Manager is used for firmware/package transfers. Completed files are stored in Downloads.",Modifier.padding(16.dp))}}
  @Composable private fun Settings()=Column(Modifier.padding(20.dp)){Text("Settings",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold);Spacer(Modifier.height(10.dp));Card(Modifier.fillMaxWidth()){Column(Modifier.padding(16.dp)){Text("OS Updater for Galaxy Tab S",fontWeight=FontWeight.Bold);Text("T805 • T805K • T807 • T800 • T705");Text("Native UI. No embedded websites.")}}}
  @Composable private fun Tools(){var path by remember{mutableStateOf("")};var part by remember{mutableStateOf("boot")};var status by remember{mutableStateOf("Root: "+root("id").trim().ifBlank{"not granted"})};Column(Modifier.padding(20.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){Text("Flashing tools",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold);Text("Recovery: "+root("getprop ro.twrp.version; getprop ro.orangefox.version; getprop ro.of.version").lines().filter{it.isNotBlank()}.joinToString(" / ").ifBlank{"not detected"});OutlinedTextField(path,{path=it},Modifier.fillMaxWidth(),label={Text("Image/package path")},singleLine=true);OutlinedTextField(part,{part=it},Modifier.fillMaxWidth(),label={Text("Partition")},singleLine=true);Button({status=dd(path,part)},Modifier.fillMaxWidth()){Text("Flash image with dd")};Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){Button({status=if(recovery(File(path).name))"TWRP OpenRecoveryScript prepared" else "Failed"},Modifier.weight(1f)){Text("TWRP")};Button({status=if(recovery(File(path).name))"OrangeFox OpenRecoveryScript prepared" else "Failed"},Modifier.weight(1f)){Text("OrangeFox")}};Text("Stock extraction workflow: outer ZIP → TAR.MD5 → individual images. Verify model/build before raw flashing.");Text(status)}}
