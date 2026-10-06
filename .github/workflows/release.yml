@@ -52,13 +52,13 @@ jobs:
           name: os-updater-galaxy-tab-s-release
           path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
-      - name: Publish v1.0.0
+      - name: Publish v1.1.0
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.0
-          name: OS Updater for Galaxy Tab S v1.0.0
+          tag_name: v1.1.0
+          name: OS Updater for Galaxy Tab S v1.1.0
           body: |
-            First release of OS Updater for Galaxy Tab S.
+            Native full UI release with multi- CSC support of OS Updater for Galaxy Tab S.
             Supports T805, T805K, T807, T800 and T705 workflows.
           generate_release_notes: true
           files: app/build/outputs/apk/release/app-release.apk
