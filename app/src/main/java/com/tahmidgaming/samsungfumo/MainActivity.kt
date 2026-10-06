@@ -64,7 +64,43 @@ class MainActivity:ComponentActivity(){
  private suspend fun ota(model:String,csc:String):Ota{val xml=get("https://fota-cloud-dn.ospserver.net/firmware/"+csc+"/"+model+"/version.xml");val v=Regex("<latest>(.*?)</latest>").find(xml)?.groupValues?.get(1)?.trim();return Ota(v?:"No update",csc)}
  private fun recovery(file:String):Boolean{val safe=file.substringAfterLast('/').takeIf{it.matches(Regex("[A-Za-z0-9._+()\\- ]+"))}?:return false;val script="install /sdcard/Download/"+safe+"\n";val cmd="mkdir -p /cache/recovery /data/cache/recovery /persist/cache/recovery 2>/dev/null; for f in /cache/recovery/openrecoveryscript /data/cache/recovery/openrecoveryscript /persist/cache/recovery/openrecoveryscript; do d=\$(dirname \"\$f\"); if [ -d \"\$d\" ]; then printf '%s' "+quote(script)+" > \"\$f\"; chmod 0644 \"\$f\"; echo OK; break; fi; done";return root(cmd).contains("OK")}
  private fun dd(path:String,part:String):String{val f=File(path);if(!f.exists())return "Image not found";if(!part.matches(Regex("[A-Za-z0-9_+.-]+")))return "Invalid partition";val dst="/dev/block/by-name/"+part;val o=root("[ -b '"+dst+"' ] || exit 3; dd if="+quote(f.absolutePath)+" of='"+dst+"' bs=4M conv=fsync; sync; echo DD_OK");return if(o.contains("DD_OK"))"Flashed "+part+" successfully" else "dd failed"}
- @OptIn(ExperimentalMaterial3Api::class) @Composable private fun App(){var screen by remember{mutableStateOf("home")};var model by remember{mutableStateOf(MODELS[0])};var csc by remember{mutableStateOf(MODELS[0].cscs[0])};var checking by remember{mutableStateOf(true)};LaunchedEffect(Unit){kotlinx.coroutines.delay(600);checking=false};if(checking){Checking();return};Scaffold(topBar={TopAppBar(title={Text(title(screen))},navigationIcon={if(screen!="home")IconButton({screen="home"}){Icon(Icons.Default.ArrowBack,null)}})},bottomBar={if(screen in setOf("home","firmware","lineage","downloads","tools","settings"))Bottom(screen){screen=it}}){p->Surface(Modifier.fillMaxSize().padding(p)){when(screen){"home"->Home(model,csc){screen=it};"models"->Models(model){model=it;csc=it.cscs.first();screen="home"};"csc"->Cscs(model,csc){csc=it;screen="home"};"firmware"->Firmware(model,csc);"lineage"->Lineage(model);"ota"->OtaScreen(model,csc);"downloads"->Downloads();"tools"->Tools();"settings"->Settings()}}}}
+ @OptIn(ExperimentalMaterial3Api::class)
+ @Composable
+ private fun App(){
+     var screen by remember { mutableStateOf("home") }
+     var model by remember { mutableStateOf(MODELS[0]) }
+     var csc by remember { mutableStateOf(MODELS[0].cscs[0]) }
+     var checking by remember { mutableStateOf(true) }
+     LaunchedEffect(Unit) { kotlinx.coroutines.delay(600); checking = false }
+     if(checking){ Checking(); return }
+     Scaffold(
+         topBar = {
+             TopAppBar(
+                 title = { Text(title(screen)) },
+                 navigationIcon = {
+                     if(screen != "home") IconButton(onClick = { screen = "home" }) { Icon(Icons.Default.ArrowBack, null) }
+                 }
+             )
+         },
+         bottomBar = {
+             if(screen in setOf("home","firmware","lineage","downloads","tools","settings")) Bottom(screen) { screen = it }
+         }
+     ){ padding ->
+         Surface(Modifier.fillMaxSize().padding(padding)){
+             when(screen){
+                 "home" -> Home(model,csc){ screen = it }
+                 "models" -> Models(model){ model = it; csc = it.cscs.first(); screen = "home" }
+                 "csc" -> Cscs(model,csc){ csc = it; screen = "home" }
+                 "firmware" -> Firmware(model,csc)
+                 "lineage" -> Lineage(model)
+                 "ota" -> OtaScreen(model,csc)
+                 "downloads" -> Downloads()
+                 "tools" -> Tools()
+                 "settings" -> Settings()
+             }
+         }
+     }
+ }
  @Composable private fun Checking(){Column(Modifier.fillMaxSize(),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center){CircularProgressIndicator();Spacer(Modifier.height(16.dp));Text("Checking device…",fontWeight=FontWeight.SemiBold);Text("OS Updater for Galaxy Tab S")}}
  private fun title(s:String)=when(s){"firmware"->"Stock firmware";"lineage"->"LineageOS";"ota"->"Stock OTA";"downloads"->"Downloads";"tools"->"Flashing tools";"settings"->"Settings";"models"->"Galaxy Tab S models";"csc"->"CSC selection";else->"OS Updater for Galaxy Tab S"}
  @Composable private fun Bottom(s:String,go:(String)->Unit){NavigationBar{listOf("home" to Icons.Default.Home,"firmware" to Icons.Default.SystemUpdate,"lineage" to Icons.Default.Android,"downloads" to Icons.Default.Download,"tools" to Icons.Default.Build,"settings" to Icons.Default.Settings).forEach{(id,icon)->NavigationBarItem(selected=s==id,onClick={go(id)},icon={Icon(icon,null)},label={Text(id.replaceFirstChar{it.uppercase()})})}}}
