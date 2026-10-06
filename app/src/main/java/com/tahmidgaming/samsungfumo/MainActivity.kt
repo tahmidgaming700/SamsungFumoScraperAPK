@@ -13,6 +13,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -162,7 +163,7 @@ class MainActivity:ComponentActivity(){
          item{UpdateCard("App updater","OS Updater for Galaxy Tab S","Latest: "+(app?.tag?:"Checking…"),app?.apkUrl,ctx)}
          item{UpdateCard("OS updater","Samsung FUMO • "+m.model+" • "+c.code,"Latest: "+(os?.version?:"Checking…"),null,ctx)}
          item{UpdateCard("Root updater","Magisk","Latest: "+(root?.version?:"Checking…"),root?.apkUrl,ctx)}
-         item{Card(Modifier.fillMaxWidth(),shape=RoundedCornerShape(24.dp)){Column(Modifier.padding(18.dp)){Text("FUMO / 403 handling",fontWeight=FontWeight.Bold);Spacer(Modifier.height(6.dp));Text("Update checks no longer depend on SamFW web pages. Samsung FUMO is queried with the Kies2.0_FUS client header and a secure-host fallback. A Samsung-side 403 is reported clearly instead of being treated as a firmware-list error.")}}
+         item{Card(Modifier.fillMaxWidth(),shape=RoundedCornerShape(24.dp)){Column(Modifier.padding(18.dp)){Text("FUMO / 403 handling",fontWeight=FontWeight.Bold);Spacer(Modifier.height(6.dp));Text("Update checks no longer depend on SamFW web pages. Samsung FUMO is queried with the Kies2.0_FUS client header and a secure-host fallback. A Samsung-side 403 is reported clearly instead of being treated as a firmware-list error.")}}}
          item{Button(onClick={refresh()},modifier=Modifier.fillMaxWidth(),enabled=!busy){Icon(Icons.Default.Refresh,null);Spacer(Modifier.width(8.dp));Text("Check again")}}
          item{Text(message,color=MaterialTheme.colorScheme.onSurfaceVariant)}
      }
