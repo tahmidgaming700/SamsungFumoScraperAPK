@@ -8,16 +8,6 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
-import android.view.ViewGroup
-import android.webkit.CookieManager
-import android.webkit.DownloadListener
-import android.webkit.URLUtil
-import android.webkit.WebChromeClient
-import android.webkit.WebResourceError
-import android.webkit.WebResourceRequest
-import android.webkit.WebSettings
-import android.webkit.WebView
-import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -28,14 +18,13 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
@@ -46,387 +35,46 @@ import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
-import java.io.FileOutputStream
-import java.util.zip.ZipInputStream
 
-private data class GalaxyModel(val model: String, val name: String, val csc: String, val lineage: String)
-private data class LBuild(val filename: String, val url: String, val sha256: String?, val size: Long?)
+data class Csc(val code:String,val country:String)
+data class GalaxyModel(val model:String,val name:String,val codename:String,val cscs:List<Csc>)
+data class Firmware(val version:String,val csc:String,val sourceUrl:String)
+data class LBuild(val filename:String,val url:String,val sha256:String?,val size:Long?)
+data class Ota(val version:String,val csc:String)
 
-private val MODELS = listOf(
-    GalaxyModel("SM-T805", "Galaxy Tab S 10.5 LTE", "BNG", "chagalllte"),
-    GalaxyModel("SM-T805K", "Galaxy Tab S 10.5 LTE Korea", "KOO", "chagalllte"),
-    GalaxyModel("SM-T807", "Galaxy Tab S 10.5 LTE", "TMB", "chagalllte"),
-    GalaxyModel("SM-T800", "Galaxy Tab S 10.5 Wi-Fi", "XAR", "chagallwifi"),
-    GalaxyModel("SM-T705", "Galaxy Tab S 8.4 LTE", "BNG", "klimtlte")
+private val MODELS=listOf(
+ GalaxyModel("SM-T805","Galaxy Tab S 10.5 LTE","chagalllte",listOf(Csc("BNG","Bangladesh"),Csc("INU","India"),Csc("INS","India"),Csc("NPL","Nepal"),Csc("XSG","UAE"),Csc("XME","Malaysia"),Csc("XSE","Indonesia"),Csc("TUR","Turkey"))),
+ GalaxyModel("SM-T805K","Galaxy Tab S 10.5 LTE Korea","chagalllte",listOf(Csc("KOO","South Korea"))),
+ GalaxyModel("SM-T807","Galaxy Tab S 10.5 LTE","chagalllte",listOf(Csc("TMB","USA / T-Mobile"),Csc("TUR","Turkey"))),
+ GalaxyModel("SM-T800","Galaxy Tab S 10.5 Wi-Fi","chagallwifi",listOf(Csc("XAR","USA"),Csc("XSG","UAE"),Csc("XME","Malaysia"),Csc("XSE","Indonesia"))),
+ GalaxyModel("SM-T705","Galaxy Tab S 8.4 LTE","klimtlte",listOf(Csc("BNG","Bangladesh"),Csc("INU","India"),Csc("INS","India"),Csc("NPL","Nepal"),Csc("LUX","Luxembourg"),Csc("XSG","UAE")))
 )
 
-class MainActivity : ComponentActivity() {
-    private val http = OkHttpClient()
-    private val storage = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
-
-    override fun onCreate(state: Bundle?) {
-        super.onCreate(state)
-        if (Build.VERSION.SDK_INT <= 28 &&
-            ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED
-        ) storage.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
-        setContent { App() }
-    }
-
-    private fun root(command: String): String = runCatching {
-        val p = ProcessBuilder("su", "-c", command).redirectErrorStream(true).start()
-        val out = p.inputStream.bufferedReader().use { it.readText() }
-        p.waitFor()
-        out
-    }.getOrDefault("")
-
-    private fun shellQuote(value: String) = "'" + value.replace("'", "'\\''") + "'"
-
-    private fun enqueue(c: Context, url: String, name: String, referer: String? = null) {
-        if (!url.startsWith("http://") && !url.startsWith("https://")) return
-        val request = DownloadManager.Request(Uri.parse(url))
-            .setTitle(name)
-            .setDescription("OS Updater for Galaxy Tab S")
-            .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-            .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, name)
-            .setMimeType("application/octet-stream")
-            .addRequestHeader("User-Agent", "OSUpdaterGalaxyTabS/1.0")
-        if (referer != null) request.addRequestHeader("Referer", referer)
-        val id = (c.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager).enqueue(request)
-        Toast.makeText(c, "Download started (#" + id + ")", Toast.LENGTH_LONG).show()
-    }
-
-    private suspend fun archive(codename: String): List<LBuild> = withContext(Dispatchers.IO) {
-        val request = Request.Builder().url("https://lineage-archive.timschumi.net/api/builds").build()
-        http.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) error("Archive HTTP " + response.code)
-            val array = JSONArray(response.body?.string() ?: "[]")
-            val rows = (0 until array.length()).map { array.getJSONObject(it) }
-                .filter { it.optString("device") == codename }
-                .sortedByDescending { it.optString("filename") }
-                .take(15)
-            rows.mapNotNull { row ->
-                val id = row.optLong("id", -1)
-                if (id < 0) null else {
-                    val detail = Request.Builder()
-                        .url("https://lineage-archive.timschumi.net/api/builds/" + id)
-                        .build()
-                    http.newCall(detail).execute().use { d ->
-                        if (!d.isSuccessful) null else {
-                            val o = JSONObject(d.body?.string() ?: "{}")
-                            LBuild(
-                                o.optString("filename"),
-                                o.optString("url"),
-                                o.optString("sha256").takeIf { it.isNotBlank() },
-                                o.optLong("filesize").takeIf { it > 0 }
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private fun prepareRecovery(filename: String): Boolean {
-        val safe = filename.substringAfterLast('/').takeIf {
-            it.matches(Regex("[A-Za-z0-9._+()\\- ]+"))
-        } ?: return false
-        val script = "install /sdcard/Download/" + safe + "\n"
-        val command = "mkdir -p /cache/recovery /data/cache/recovery /persist/cache/recovery 2>/dev/null; " +
-            "for f in /cache/recovery/openrecoveryscript /data/cache/recovery/openrecoveryscript /persist/cache/recovery/openrecoveryscript; do " +
-            "d=\$(dirname \"\$f\"); if [ -d \"\$d\" ]; then printf '%s' " + shellQuote(script) +
-            " > \"\$f\"; chmod 0644 \"\$f\"; echo OK; break; fi; done"
-        return root(command).contains("OK")
-    }
-
-    private fun flashDd(image: File, partition: String): String {
-        if (!image.exists()) return "Image not found"
-        if (!partition.matches(Regex("[A-Za-z0-9_+.-]+"))) return "Invalid partition"
-        val destination = "/dev/block/by-name/" + partition
-        val output = root("[ -b '" + destination + "' ] || exit 3; dd if=" +
-            shellQuote(image.absolutePath) + " of='" + destination + "' bs=4M conv=fsync; sync; echo DD_OK")
-        return if (output.contains("DD_OK")) "Flashed " + partition + " successfully"
-        else "dd failed: " + output.takeLast(240)
-    }
-
-    private fun partitionNames(): List<String> =
-        root("ls -1 /dev/block/by-name 2>/dev/null").lines()
-            .filter { it.matches(Regex("[A-Za-z0-9_+.-]+")) }.distinct().sorted()
-
-    private fun extractZip(source: File, output: File): Int {
-        output.mkdirs()
-        var count = 0
-        ZipInputStream(source.inputStream().buffered()).use { zip ->
-            while (true) {
-                val entry = zip.nextEntry ?: break
-                val target = File(output, entry.name)
-                if (!target.canonicalPath.startsWith(output.canonicalFile.canonicalPath + File.separator)) continue
-                if (entry.isDirectory) target.mkdirs()
-                else {
-                    target.parentFile?.mkdirs()
-                    FileOutputStream(target).use { zip.copyTo(it) }
-                    count++
-                }
-            }
-        }
-        return count
-    }
-
-    private fun extractTar(source: File, output: File): Int {
-        output.mkdirs()
-        val p = ProcessBuilder("sh", "-c",
-            "tar -xf " + shellQuote(source.absolutePath) + " -C " + shellQuote(output.absolutePath))
-            .redirectErrorStream(true).start()
-        p.waitFor()
-        if (p.exitValue() != 0)
-            root("tar -xf " + shellQuote(source.absolutePath) + " -C " + shellQuote(output.absolutePath))
-        return output.walkTopDown().count { it.isFile }
-    }
-
-    @OptIn(ExperimentalMaterial3Api::class)
-    @Composable
-    private fun App() {
-        var page by remember { mutableStateOf("home") }
-        var model by remember { mutableStateOf(MODELS[0]) }
-        Scaffold(topBar = {
-            TopAppBar(
-                title = { Text(pageTitle(page)) },
-                navigationIcon = {
-                    if (page != "home") IconButton({ page = "home" }) {
-                        Icon(Icons.Default.ArrowBack, null)
-                    }
-                }
-            )
-        }) { padding ->
-            Surface(Modifier.fillMaxSize().padding(padding)) {
-                when (page) {
-                    "home" -> Home(model) { page = it }
-                    "models" -> Models(model) { model = it; page = "home" }
-                    "lineage" -> Lineage(model)
-                    "stock" -> Browser(
-                        "https://samfw.com/firmware/" + model.model + "/" + model.csc,
-                        "SamFW • " + model.model
-                    )
-                    "ota" -> Browser("https://fumo.timschneeberger.me/", "Samsung FUMO • " + model.model)
-                    "extract" -> Extract()
-                    "flash" -> Flash()
-                }
-            }
-        }
-    }
-
-    private fun pageTitle(page: String) = when (page) {
-        "models" -> "Galaxy Tab S models"
-        "lineage" -> "LineageOS archive"
-        "stock" -> "Stock firmware"
-        "ota" -> "Stock OTA"
-        "extract" -> "Extract firmware"
-        "flash" -> "Flashing tools"
-        else -> "OS Updater for Galaxy Tab S"
-    }
-
-    @Composable
-    private fun Home(model: GalaxyModel, go: (String) -> Unit) {
-        LazyColumn(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            item {
-                Card(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(18.dp)) {
-                        Text("Software Update", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                        Text("Galaxy Tab S firmware, LineageOS and recovery tools")
-                        Spacer(Modifier.height(12.dp))
-                        Text(model.model, fontWeight = FontWeight.Bold)
-                        Text(model.name)
-                        Text("CSC " + model.csc + " • " + model.lineage)
-                        Spacer(Modifier.height(8.dp))
-                        Button({ go("models") }, Modifier.fillMaxWidth()) { Text("Change model") }
-                    }
-                }
-            }
-            item { Action("LineageOS", "TimSchumi archive • OTA-ready package", Icons.Default.SystemUpdate) { go("lineage") } }
-            item { Action("Stock firmware", "SamFW server workflow", Icons.Default.Download) { go("stock") } }
-            item { Action("Stock OTA", "Samsung FUMO / OMA-DM workflow", Icons.Default.Refresh) { go("ota") } }
-            item { Action("Extract firmware", "ZIP → TAR.MD5 → images", Icons.Default.Folder) { go("extract") } }
-            item { Action("Flashing tools", "TWRP / OrangeFox OpenRecoveryScript • dd", Icons.Default.FlashOn) { go("flash") } }
-            item {
-                Card(Modifier.fillMaxWidth()) {
-                    Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Warning, null)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Root flashing can permanently brick the tablet. Verify the model and partition before writing.")
-                    }
-                }
-            }
-        }
-    }
-
-    @Composable
-    private fun Action(title: String, subtitle: String, icon: androidx.compose.ui.graphics.vector.ImageVector, go: () -> Unit) {
-        Card(Modifier.fillMaxWidth()) {
-            Row(Modifier.padding(15.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(icon, null, Modifier.size(30.dp))
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(title, fontWeight = FontWeight.Bold)
-                    Text(subtitle, style = MaterialTheme.typography.bodySmall)
-                }
-                Button(go) { Text("Open") }
-            }
-        }
-    }
-
-    @Composable
-    private fun Models(current: GalaxyModel, select: (GalaxyModel) -> Unit) {
-        LazyColumn(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            items(MODELS) { model ->
-                Card(Modifier.fillMaxWidth()) {
-                    Row(Modifier.padding(15.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(model.model, fontWeight = FontWeight.Bold)
-                            Text(model.name)
-                            Text("CSC " + model.csc + " • " + model.lineage)
-                        }
-                        FilterChip(current.model == model.model, { select(model) }, label = { Text("Select") })
-                    }
-                }
-            }
-        }
-    }
-
-    @Composable
-    private fun Lineage(model: GalaxyModel) {
-        val context = LocalContext.current
-        var builds by remember { mutableStateOf<List<LBuild>>(emptyList()) }
-        var status by remember { mutableStateOf("Press Check archive") }
-        Column(Modifier.fillMaxSize().padding(20.dp)) {
-            Text("TimSchumi LineageOS archive", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            Text(model.model + " • " + model.lineage + ". Archived builds are unofficial.")
-            Spacer(Modifier.height(12.dp))
-            Button({
-                lifecycleScope.launch {
-                    status = "Checking…"
-                    runCatching { archive(model.lineage) }
-                        .onSuccess { builds = it; status = it.size.toString() + " builds found" }
-                        .onFailure { status = it.message ?: "Archive error" }
-                }
-            }, Modifier.fillMaxWidth()) {
-                Icon(Icons.Default.Refresh, null)
-                Spacer(Modifier.width(8.dp))
-                Text("Check archive")
-            }
-            Spacer(Modifier.height(8.dp))
-            Text(status)
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(builds) { build ->
-                    Card(Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(14.dp)) {
-                            Text(build.filename, fontWeight = FontWeight.Bold)
-                            build.size?.let { Text("Size: " + (it / 1024 / 1024) + " MB") }
-                            build.sha256?.let { Text("SHA-256: " + it, style = MaterialTheme.typography.bodySmall) }
-                            Spacer(Modifier.height(6.dp))
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Button({ enqueue(context, build.url, build.filename, "https://lineage-archive.timschumi.net/") }) { Text("Download") }
-                                OutlinedButton({ enqueue(context, build.url, build.filename, "https://lineage-archive.timschumi.net/") }) { Text("OTA package") }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    @Composable
-    private fun Browser(url: String, label: String) {
-        val context = LocalContext.current
-        Column(Modifier.fillMaxSize()) {
-            Text(label, Modifier.padding(14.dp), fontWeight = FontWeight.Bold)
-            AndroidView({ makeWebView(context, url) }, Modifier.fillMaxSize())
-        }
-    }
-
-    private fun makeWebView(context: Context, url: String): WebView = WebView(context).apply {
-        layoutParams = ViewGroup.LayoutParams(-1, -1)
-        settings.javaScriptEnabled = true
-        settings.domStorageEnabled = true
-        settings.databaseEnabled = true
-        settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
-        CookieManager.getInstance().setAcceptCookie(true)
-        CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
-        webChromeClient = WebChromeClient()
-        webViewClient = object : WebViewClient() {
-            override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
-                if (request.isForMainFrame) Toast.makeText(context, "Page error: " + error.description, Toast.LENGTH_LONG).show()
-            }
-        }
-        setDownloadListener(DownloadListener { url2, userAgent, disposition, mime, _ ->
-            if (url2.startsWith("http")) {
-                val name = URLUtil.guessFileName(url2, disposition, mime).ifBlank { "firmware.bin" }
-                val request = DownloadManager.Request(Uri.parse(url2))
-                    .setTitle(name).setDescription("OS Updater firmware")
-                    .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                    .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, name)
-                    .setMimeType(mime ?: "application/octet-stream")
-                    .addRequestHeader("User-Agent", userAgent ?: settings.userAgentString)
-                (context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager).enqueue(request)
-                Toast.makeText(context, "Download started", Toast.LENGTH_LONG).show()
-            }
-        })
-        loadUrl(url)
-    }
-
-    @Composable
-    private fun Extract() {
-        val context = LocalContext.current
-        var path by remember { mutableStateOf("") }
-        var result by remember { mutableStateOf("Download the firmware first, then enter its local path.") }
-        Column(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Extraction procedure", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            Text("1. Download stock firmware. 2. Extract ZIP. 3. Extract TAR.MD5. 4. Inspect images. 5. Select only the exact image/partition pair for dd.")
-            OutlinedTextField(path, { path = it }, Modifier.fillMaxWidth(), label = { Text("Firmware path") }, singleLine = true)
-            Button({
-                val source = File(path)
-                if (!source.exists()) result = "File not found"
-                else {
-                    val output = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "OSUpdater/" + source.nameWithoutExtension)
-                    val count = if (source.extension.equals("zip", true)) extractZip(source, output) else extractTar(source, output)
-                    result = "Extracted " + count + " files to " + output.absolutePath
-                }
-            }, Modifier.fillMaxWidth()) { Text("Extract") }
-            Text(result)
-        }
-    }
-
-    @Composable
-    private fun Flash() {
-        var image by remember { mutableStateOf("") }
-        var partition by remember { mutableStateOf("boot") }
-        var result by remember { mutableStateOf("Root: " + root("id").trim().ifBlank { "not granted" }) }
-        var partitions by remember { mutableStateOf<List<String>>(emptyList()) }
-        val recovery = root("getprop ro.twrp.version; getprop ro.orangefox.version; getprop ro.of.version")
-            .lines().filter { it.isNotBlank() }.joinToString(" / ").ifBlank { "not detected" }
-        Column(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Flashing tools", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            Text("Root: " + root("id").trim().ifBlank { "not granted" })
-            Text("Recovery: " + recovery)
-            Button({ partitions = partitionNames(); result = partitions.size.toString() + " by-name partitions detected" }, Modifier.fillMaxWidth()) { Text("Detect partitions") }
-            if (partitions.isNotEmpty()) Text("Detected: " + partitions.joinToString(", "))
-            OutlinedTextField(image, { image = it }, Modifier.fillMaxWidth(), label = { Text("Image path") }, singleLine = true)
-            OutlinedTextField(partition, { partition = it }, Modifier.fillMaxWidth(), label = { Text("Partition name for dd") }, singleLine = true)
-            Button({ result = flashDd(File(image), partition) }, Modifier.fillMaxWidth()) {
-                Icon(Icons.Default.FlashOn, null)
-                Spacer(Modifier.width(8.dp))
-                Text("Flash image with dd")
-            }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button({ result = if (prepareRecovery(File(image).name)) "TWRP OpenRecoveryScript prepared" else "Could not prepare script" }, Modifier.weight(1f)) { Text("TWRP") }
-                Button({ result = if (prepareRecovery(File(image).name)) "OrangeFox OpenRecoveryScript prepared" else "Could not prepare script" }, Modifier.weight(1f)) { Text("OrangeFox") }
-            }
-            Card(Modifier.fillMaxWidth()) {
-                Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Warning, null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("dd writes directly to a block device. A wrong target can hard-brick the tablet. Bootloader/security restrictions are not bypassed.")
-                }
-            }
-            Text(result)
-        }
-    }
+class MainActivity:ComponentActivity(){
+ private val http=OkHttpClient()
+ private val permission=registerForActivityResult(ActivityResultContracts.RequestPermission()){}
+ override fun onCreate(b:Bundle?){super.onCreate(b);if(Build.VERSION.SDK_INT<=28&&ContextCompat.checkSelfPermission(this,Manifest.permission.WRITE_EXTERNAL_STORAGE)!=PackageManager.PERMISSION_GRANTED)permission.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE);setContent{App()}}
+ private fun root(c:String)=runCatching{val p=ProcessBuilder("su","-c",c).redirectErrorStream(true).start();val o=p.inputStream.bufferedReader().use{it.readText()};p.waitFor();o}.getOrDefault("")
+ private fun quote(s:String)="'"+s.replace("'","'\\''")+"'"
+ private fun enqueue(c:Context,url:String,name:String){if(!url.startsWith("http"))return;val r=DownloadManager.Request(Uri.parse(url)).setTitle(name).setDescription("OS Updater for Galaxy Tab S").setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED).setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS,name).setMimeType("application/octet-stream").addRequestHeader("User-Agent","OSUpdaterGalaxyTabS/1.1");val id=(c.getSystemService(Context.DOWNLOAD_SERVICE)as DownloadManager).enqueue(r);Toast.makeText(c,"Download started (#"+id+")",Toast.LENGTH_LONG).show()}
+ private suspend fun get(url:String)=withContext(Dispatchers.IO){http.newCall(Request.Builder().url(url).header("User-Agent","OSUpdaterGalaxyTabS/1.1").build()).execute().use{if(!it.isSuccessful)error("HTTP "+it.code);it.body?.string()?:""}}
+ private suspend fun lineage(code:String):List<LBuild>{val a=JSONArray(get("https://lineage-archive.timschumi.net/api/builds"));return withContext(Dispatchers.IO){(0 until a.length()).map{a.getJSONObject(it)}.filter{it.optString("device")==code}.sortedByDescending{it.optString("filename")}.take(25).mapNotNull{r->runCatching{val o=JSONObject(get("https://lineage-archive.timschumi.net/api/builds/"+r.optLong("id")));LBuild(o.optString("filename"),o.optString("url"),o.optString("sha256").takeIf{it.isNotBlank()},o.optLong("filesize").takeIf{it>0})}.getOrNull()}}}
+ private suspend fun stock(model:String,csc:String):List<Firmware>{val html=get("https://samfw.com/firmware/"+model+"/"+csc);val rx=Regex("/firmware/"+Regex.escape(model)+"/"+Regex.escape(csc)+"/([A-Za-z0-9]+)");return rx.findAll(html).map{it.groupValues[1]}.distinct().take(20).map{Firmware(it,csc,"https://samfw.com/firmware/"+model+"/"+csc+"/"+it)}.toList()}
+ private suspend fun ota(model:String,csc:String):Ota{val xml=get("https://fota-cloud-dn.ospserver.net/firmware/"+csc+"/"+model+"/version.xml");val v=Regex("<latest>(.*?)</latest>").find(xml)?.groupValues?.get(1)?.trim();return Ota(v?:"No update",csc)}
+ private fun recovery(file:String):Boolean{val safe=file.substringAfterLast('/').takeIf{it.matches(Regex("[A-Za-z0-9._+()\\- ]+"))}?:return false;val script="install /sdcard/Download/"+safe+"\n";val cmd="mkdir -p /cache/recovery /data/cache/recovery /persist/cache/recovery 2>/dev/null; for f in /cache/recovery/openrecoveryscript /data/cache/recovery/openrecoveryscript /persist/cache/recovery/openrecoveryscript; do d=\$(dirname \"\$f\"); if [ -d \"\$d\" ]; then printf '%s' "+quote(script)+" > \"\$f\"; chmod 0644 \"\$f\"; echo OK; break; fi; done";return root(cmd).contains("OK")}
+ private fun dd(path:String,part:String):String{val f=File(path);if(!f.exists())return "Image not found";if(!part.matches(Regex("[A-Za-z0-9_+.-]+")))return "Invalid partition";val dst="/dev/block/by-name/"+part;val o=root("[ -b '"+dst+"' ] || exit 3; dd if="+quote(f.absolutePath)+" of='"+dst+"' bs=4M conv=fsync; sync; echo DD_OK");return if(o.contains("DD_OK"))"Flashed "+part+" successfully" else "dd failed"}
+ @Composable private fun App(){var screen by remember{mutableStateOf("home")};var model by remember{mutableStateOf(MODELS[0])};var csc by remember{mutableStateOf(MODELS[0].cscs[0])};var checking by remember{mutableStateOf(true)};LaunchedEffect(Unit){kotlinx.coroutines.delay(600);checking=false};if(checking){Checking();return};Scaffold(topBar={TopAppBar(title={Text(title(screen))},navigationIcon={if(screen!="home")IconButton({screen="home"}){Icon(Icons.Default.ArrowBack,null)}})},bottomBar={if(screen in setOf("home","firmware","lineage","downloads","tools","settings"))Bottom(screen){screen=it}}){p->Surface(Modifier.fillMaxSize().padding(p)){when(screen){"home"->Home(model,csc){screen=it};"models"->Models(model){model=it;csc=it.cscs.first();screen="home"};"csc"->Cscs(model,csc){csc=it;screen="home"};"firmware"->Firmware(model,csc);"lineage"->Lineage(model);"ota"->OtaScreen(model,csc);"downloads"->Downloads();"tools"->Tools();"settings"->Settings()}}}}
+ @Composable private fun Checking(){Column(Modifier.fillMaxSize(),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center){CircularProgressIndicator();Spacer(Modifier.height(16.dp));Text("Checking device…",fontWeight=FontWeight.SemiBold);Text("OS Updater for Galaxy Tab S")}}
+ private fun title(s:String)=when(s){"firmware"->"Stock firmware";"lineage"->"LineageOS";"ota"->"Stock OTA";"downloads"->"Downloads";"tools"->"Flashing tools";"settings"->"Settings";"models"->"Galaxy Tab S models";"csc"->"CSC selection";else->"OS Updater"}
+ @Composable private fun Bottom(s:String,go:(String)->Unit){NavigationBar{listOf("home" to Icons.Default.Home,"firmware" to Icons.Default.SystemUpdate,"lineage" to Icons.Default.Android,"downloads" to Icons.Default.Download,"tools" to Icons.Default.Build,"settings" to Icons.Default.Settings).forEach{(id,icon)->NavigationBarItem(s==id,{go(id)},icon,{Text(id.replaceFirstChar{it.uppercase()})})}}}
+ @Composable private fun Home(m:GalaxyModel,c:Csc,go:(String)->Unit)=LazyColumn(Modifier.padding(20.dp),verticalArrangement=Arrangement.spacedBy(14.dp)){item{Card(Modifier.fillMaxWidth()){Column(Modifier.padding(20.dp)){Text("Software Update",style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold);Text("Galaxy Tab S firmware center");Spacer(Modifier.height(12.dp));Text(m.model,fontWeight=FontWeight.Bold);Text(m.name);Text("CSC "+c.code+" • "+c.country);Spacer(Modifier.height(10.dp));Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){Button({go("models")}){Text("Device")};OutlinedButton({go("csc")}){Text("CSC")}}}}};item{CardNav("Stock firmware","Native firmware search • SamFW Server",Icons.Default.SystemUpdate){go("firmware")}};item{CardNav("LineageOS","TimSchumi archive • SHA-256 • OTA package",Icons.Default.Android){go("lineage")}};item{CardNav("Stock OTA","Samsung FOTA metadata • no website UI",Icons.Default.Refresh){go("ota")}};item{CardNav("Downloads","Firmware and package downloads",Icons.Default.Download){go("downloads")}};item{CardNav("Flashing tools","TWRP • OrangeFox • dd",Icons.Default.Build){go("tools")}};item{Card(Modifier.fillMaxWidth()){Column(Modifier.padding(16.dp)){Text("Native interface",fontWeight=FontWeight.Bold);Text("No SamFW, Samsung FUMO, or archive websites are embedded in the app UI. Network services are consumed by the app and rendered as native screens.")}}}}
+ @Composable private fun CardNav(t:String,s:String,i:ImageVector,go:()->Unit)=Card(Modifier.fillMaxWidth()){Row(Modifier.padding(16.dp),verticalAlignment=Alignment.CenterVertically){Icon(i,null,Modifier.size(32.dp));Spacer(Modifier.width(14.dp));Column(Modifier.weight(1f)){Text(t,fontWeight=FontWeight.Bold);Text(s,style=MaterialTheme.typography.bodySmall)}IconButton(go){Icon(Icons.Default.ChevronRight,null)}}}
+ @Composable private fun Models(current:GalaxyModel,select:(GalaxyModel)->Unit)=LazyColumn(Modifier.padding(20.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){items(MODELS){m->Card(Modifier.fillMaxWidth()){Row(Modifier.padding(16.dp),verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text(m.model,fontWeight=FontWeight.Bold);Text(m.name);Text(m.cscs.size.toString()+" CSC options")};Button({select(m)}){Text(if(m.model==current.model)"Selected" else "Select")}}}}}
+ @Composable private fun Cscs(m:GalaxyModel,current:Csc,select:(Csc)->Unit)=LazyColumn(Modifier.padding(20.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){item{Text(m.model+" • CSC",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold)};items(m.cscs){c->Card(Modifier.fillMaxWidth()){Row(Modifier.padding(14.dp),verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text(c.code,fontWeight=FontWeight.Bold);Text(c.country)};FilterChip(c.code==current.code,{select(c)},label={Text("Use")})}}}}
+ @Composable private fun Firmware(m:GalaxyModel,c:Csc){val ctx=LocalContext.current;var rows by remember{mutableStateOf<List<Firmware>>(emptyList())};var status by remember{mutableStateOf("Ready")};Column(Modifier.padding(20.dp)){Text("SamFW Server",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold);Text(m.model+" • "+c.code+" • "+c.country);Button({lifecycleScope.launch{status="Checking…";runCatching{stock(m.model,c.code)}.onSuccess{rows=it;status=it.size.toString()+" firmware entries"}.onFailure{status=it.message?:"Failed"}}},Modifier.fillMaxWidth()){Text("Check firmware")};Text(status);LazyColumn(verticalArrangement=Arrangement.spacedBy(8.dp)){items(rows){f->Card(Modifier.fillMaxWidth()){Column(Modifier.padding(14.dp)){Text(f.version,fontWeight=FontWeight.Bold);Text("CSC "+f.csc);Button({enqueue(ctx,f.sourceUrl,m.model+"_"+c.code+"_"+f.version+".firmware")},Modifier.fillMaxWidth()){Text("Download from SamFW Server")}}}}}}}
+ @Composable private fun Lineage(m:GalaxyModel){val ctx=LocalContext.current;var rows by remember{mutableStateOf<List<LBuild>>(emptyList())};var status by remember{mutableStateOf("Ready")};Column(Modifier.padding(20.dp)){Text("TimSchumi Archive",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold);Text(m.model+" • "+m.codename+" • unofficial archive");Button({lifecycleScope.launch{status="Checking…";runCatching{lineage(m.codename)}.onSuccess{rows=it;status=it.size.toString()+" builds found"}.onFailure{status=it.message?:"Failed"}}},Modifier.fillMaxWidth()){Text("Check archive")};Text(status);LazyColumn(verticalArrangement=Arrangement.spacedBy(8.dp)){items(rows){b->Card(Modifier.fillMaxWidth()){Column(Modifier.padding(14.dp)){Text(b.filename,fontWeight=FontWeight.Bold);b.size?.let{Text((it/1024/1024).toString()+" MB")};b.sha256?.let{Text("SHA-256 "+it,style=MaterialTheme.typography.bodySmall)};Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){Button({enqueue(ctx,b.url,b.filename)}){Text("Download")};OutlinedButton({enqueue(ctx,b.url,b.filename)}){Text("OTA")}}}}}}}}
+ @Composable private fun OtaScreen(m:GalaxyModel,c:Csc){var state by remember{mutableStateOf("Ready")};var result by remember{mutableStateOf<Ota?>(null)};Column(Modifier.padding(20.dp)){Text("Samsung Stock OTA",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold);Text("Native FOTA check • "+m.model+" / "+c.code);Button({lifecycleScope.launch{state="Checking…";runCatching{ota(m.model,c.code)}.onSuccess{result=it;state="Complete"}.onFailure{state=it.message?:"Samsung rejected the request"}}},Modifier.fillMaxWidth()){Text("Check for OTA")};Text(state);result?.let{Card(Modifier.fillMaxWidth().padding(top=12.dp)){Column(Modifier.padding(16.dp)){Text(it.version,fontWeight=FontWeight.Bold);Text("CSC "+it.csc);Text("Samsung FOTA metadata received. A legacy device can be rejected by Samsung if registration requirements are not met.")}}}}
+ @Composable private fun Downloads()=Column(Modifier.padding(20.dp)){Text("Downloads",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold);Spacer(Modifier.height(10.dp));Card(Modifier.fillMaxWidth()){Text("Android Download Manager is used for firmware/package transfers. Completed files are stored in Downloads.",Modifier.padding(16.dp))}}
+ @Composable private fun Settings()=Column(Modifier.padding(20.dp)){Text("Settings",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold);Spacer(Modifier.height(10.dp));Card(Modifier.fillMaxWidth()){Column(Modifier.padding(16.dp)){Text("OS Updater for Galaxy Tab S",fontWeight=FontWeight.Bold);Text("T805 • T805K • T807 • T800 • T705");Text("Native UI. No embedded websites.")}}}
+ @Composable private fun Tools(){var path by remember{mutableStateOf("")};var part by remember{mutableStateOf("boot")};var status by remember{mutableStateOf("Root: "+root("id").trim().ifBlank{"not granted"})};Column(Modifier.padding(20.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){Text("Flashing tools",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold);Text("Recovery: "+root("getprop ro.twrp.version; getprop ro.orangefox.version; getprop ro.of.version").lines().filter{it.isNotBlank()}.joinToString(" / ").ifBlank{"not detected"});OutlinedTextField(path,{path=it},Modifier.fillMaxWidth(),label={Text("Image/package path")},singleLine=true);OutlinedTextField(part,{part=it},Modifier.fillMaxWidth(),label={Text("Partition")},singleLine=true);Button({status=dd(path,part)},Modifier.fillMaxWidth()){Text("Flash image with dd")};Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){Button({status=if(recovery(File(path).name))"TWRP OpenRecoveryScript prepared" else "Failed"},Modifier.weight(1f)){Text("TWRP")};Button({status=if(recovery(File(path).name))"OrangeFox OpenRecoveryScript prepared" else "Failed"},Modifier.weight(1f)){Text("OrangeFox")}};Text("Stock extraction workflow: outer ZIP → TAR.MD5 → individual images. Verify model/build before raw flashing.");Text(status)}}
 }
