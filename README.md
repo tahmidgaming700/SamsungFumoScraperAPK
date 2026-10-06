@@ -10,15 +10,16 @@ Native Android firmware/update utility focused on Samsung Galaxy Tab S variants.
 - SM-T705
 
 ## Features
-- Modern updater UI, separate from the LineageOS Archive Downloader layout
-- TimSchumi LineageOS archive discovery and download
-- LineageOS OTA-ready package download for TWRP/OrangeFox OpenRecoveryScript
-- SamFW firmware pages and SamFW-server download workflow through Android WebView/DownloadManager
-- Samsung FUMO/OMA-DM stock OTA workflow based on the public SamsungFumoScraper concept
-- ZIP and TAR.MD5 extraction procedure
-- Root detection and /dev/block/by-name partition discovery
-- dd image flashing for explicitly selected stock images
-- TWRP and OrangeFox OpenRecoveryScript preparation
+- Native updater UI modeled after the LineageOS Archive Downloader experience
+- Bottom navigation: Home, Stock Firmware, LineageOS, Downloads, Tools, Settings
+- Native model picker for SM-T805, SM-T805K, SM-T807, SM-T800 and SM-T705
+- Multi-CSC picker with regional CSC choices
+- Native SamFW firmware lookup screen; no WebView or embedded SamFW page
+- TimSchumi LineageOS archive lookup with SHA-256 metadata
+- Samsung FOTA/version.xml OTA metadata lookup without opening the FUMO website
+- Download Manager integration
+- Root detection, TWRP/OrangeFox OpenRecoveryScript preparation and dd image flashing
+- Firmware extraction workflow guidance
 
 ## Safety
 This is an unofficial community utility. Samsung firmware pages and FUMO services may require authentication or device registration. Old firmware can be unavailable. The LineageOS archive is unofficial and warns that archived builds may be obsolete. Flashing the wrong partition can permanently brick a device.
